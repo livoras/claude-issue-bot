@@ -151,10 +151,12 @@ async function handleComment(repoFullName, repoConfig, issue, comment) {
       sessionId: session.sessionId,
       cwd: session.localPath,
     });
+    console.log(`[sessions] claude replied for ${key}, output length: ${output.length}`);
     if (output) ghComment(repoFullName, issue.number, output);
+    console.log(`[sessions] comment posted for ${key}`);
   } catch (err) {
     console.error(`[sessions] error handling comment for ${key}:`, err.message);
-    ghComment(repoFullName, issue.number, `🤖 Error: ${err.message.slice(0, 500)}`);
+    try { ghComment(repoFullName, issue.number, `🤖 Error: ${err.message.slice(0, 500)}`); } catch {}
   }
 }
 
