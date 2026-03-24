@@ -2,7 +2,7 @@ const { execSync } = require('child_process');
 const config = require('./config');
 const { createServer } = require('./server');
 const { startTunnel, updateWebhooks } = require('./tunnel');
-const { Worker } = require('./worker');
+const sessions = require('./sessions');
 
 function checkDeps() {
   const deps = ['claude', 'gh', 'cloudflared', 'git'];
@@ -69,7 +69,6 @@ function cmdRemove() {
     process.exit(1);
   }
 
-  // Delete webhook on GitHub
   const hookId = cfg.hooks[repo];
   if (hookId) {
     try {
@@ -98,10 +97,45 @@ function cmdStart(args) {
   }
 
   const port = parseInt(getFlag(args, '--port') || cfg.port || '7890', 10);
-  const worker = new Worker();
+
+  // Initialize session manager
+  sessions.init();
+
+  // Job queue for sequential processing
+  const queue = [];
+  let processing = false;
+
+  async function processNext() {
+    if (processing || queue.length === 0) return;
+    processing = true;
+    const job = queue.shift();
+    try {
+      await job();
+    } catch (err) {
+      console.error('[queue] job error:', err.message);
+    }
+    processing = false;
+    processNext();
+  }
+
+  function enqueue(fn) {
+    queue.push(fn);
+    processNext();
+  }
 
   // Start webhook server
-  const server = createServer(cfg, (job) => worker.enqueue(job));
+  const server = createServer(cfg, {
+    onLabel: ({ repoFullName, repoConfig, issue }) => {
+      enqueue(() => sessions.createSession(repoFullName, repoConfig, issue));
+    },
+    onComment: ({ repoFullName, repoConfig, issue, comment }) => {
+      enqueue(() => sessions.handleComment(repoFullName, repoConfig, issue, comment));
+    },
+    onClose: ({ repoFullName, issueNumber }) => {
+      sessions.closeSession(repoFullName, issueNumber);
+    },
+  });
+
   server.listen(port, () => {
     console.log(`[server] listening on :${port}`);
     console.log(`[server] watching ${repos.length} repo(s): ${repos.join(', ')}`);
@@ -140,7 +174,7 @@ function run(args) {
     case 'remove':
       return cmdRemove();
     default:
-      console.log(`claude-issue-bot — Let GitHub Issues talk to your local Claude Code.
+      console.log(`claude-issue-bot — GitHub Issues as Claude Code chat.
 
 Usage:
   issue-bot init [--label <name>] [--base <branch>]   Register current repo
@@ -151,7 +185,9 @@ Usage:
 Workflow:
   1. cd your-project && issue-bot init
   2. issue-bot start
-  3. Add "${`claude`}" label to any issue → bot creates a PR
+  3. Add "claude" label to any issue → starts a Claude session
+  4. Comment on the issue → Claude reads and replies
+  5. Claude commits, pushes, and creates PRs autonomously
 `);
   }
 }

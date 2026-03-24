@@ -7,7 +7,7 @@ function verifySignature(secret, body, signature) {
   return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
 }
 
-function createServer(config, onIssue) {
+function createServer(config, { onLabel, onComment, onClose }) {
   const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200);
@@ -34,13 +34,6 @@ function createServer(config, onIssue) {
         return;
       }
 
-      const event = req.headers['x-github-event'];
-      if (event !== 'issues') {
-        res.writeHead(200);
-        res.end('ignored');
-        return;
-      }
-
       let payload;
       try {
         payload = JSON.parse(body);
@@ -50,11 +43,11 @@ function createServer(config, onIssue) {
         return;
       }
 
+      const event = req.headers['x-github-event'];
       const repoFullName = payload.repository?.full_name;
       const repoConfig = config.repos[repoFullName];
 
       if (!repoConfig) {
-        console.log(`[webhook] repo ${repoFullName} not configured, ignoring`);
         res.writeHead(200);
         res.end('ignored');
         return;
@@ -62,10 +55,24 @@ function createServer(config, onIssue) {
 
       const triggerLabel = repoConfig.triggerLabel || 'claude';
 
-      if (payload.action === 'labeled' && payload.label?.name === triggerLabel) {
-        const issue = payload.issue;
-        console.log(`[webhook] received issue #${issue.number}: ${issue.title} (${repoFullName})`);
-        onIssue({ repoFullName, repoConfig, issue });
+      // Issue labeled → create session
+      if (event === 'issues' && payload.action === 'labeled' && payload.label?.name === triggerLabel) {
+        console.log(`[webhook] issue #${payload.issue.number} labeled "${triggerLabel}" (${repoFullName})`);
+        onLabel({ repoFullName, repoConfig, issue: payload.issue });
+      }
+
+      // Issue comment → forward to session
+      if (event === 'issue_comment' && payload.action === 'created') {
+        // Only handle issues with the trigger label
+        const hasLabel = payload.issue.labels?.some((l) => l.name === triggerLabel);
+        if (hasLabel) {
+          onComment({ repoFullName, repoConfig, issue: payload.issue, comment: payload.comment });
+        }
+      }
+
+      // Issue closed → end session
+      if (event === 'issues' && payload.action === 'closed') {
+        onClose({ repoFullName, issueNumber: payload.issue.number });
       }
 
       res.writeHead(200);

@@ -58,6 +58,7 @@ function updateWebhooks(tunnelUrl, cfg) {
             `-f 'config[content_type]=json' ` +
             `-f 'config[secret]=${cfg.secret}' ` +
             `-f 'events[]=issues' ` +
+            `-f 'events[]=issue_comment' ` +
             `-F 'active=true'`,
           { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
         );
