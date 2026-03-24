@@ -1,4 +1,4 @@
-const { execSync, spawn } = require('child_process');
+const { spawn } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -6,10 +6,9 @@ const { CONFIG_DIR } = require('./config');
 
 const CLAUDE_TIMEOUT = 10 * 60 * 1000; // 10 minutes
 const SESSIONS_FILE = path.join(CONFIG_DIR, 'sessions.json');
-const MAX_COMMENT_LEN = 60000; // GitHub limit is 65536, leave margin
-const BOT_MARKER = '<!-- claude-issue-bot -->';
 
 let sessions = {};
+
 function loadSessions() {
   try {
     if (fs.existsSync(SESSIONS_FILE)) {
@@ -29,7 +28,7 @@ function sessionKey(repoFullName, issueNumber) {
 
 function runClaude(prompt, { sessionId, cwd, worktree }) {
   return new Promise((resolve, reject) => {
-    const args = ['-p', prompt, '--session-id', sessionId, '--output-format', 'text', '--dangerously-skip-permissions'];
+    const args = ['-p', prompt, '--session-id', sessionId, '--dangerously-skip-permissions'];
     if (worktree) args.push('--worktree', worktree);
 
     console.log(`[claude] running with session ${sessionId.slice(0, 8)}...`);
@@ -40,9 +39,7 @@ function runClaude(prompt, { sessionId, cwd, worktree }) {
       env: { ...process.env },
     });
 
-    let stdout = '';
     let stderr = '';
-    proc.stdout.on('data', (d) => { stdout += d; });
     proc.stderr.on('data', (d) => { stderr += d; });
 
     const timer = setTimeout(() => {
@@ -53,7 +50,7 @@ function runClaude(prompt, { sessionId, cwd, worktree }) {
     proc.on('exit', (code) => {
       clearTimeout(timer);
       console.log(`[claude] session ${sessionId.slice(0, 8)} exited with code ${code}`);
-      if (code === 0) resolve(stdout.trim());
+      if (code === 0) resolve();
       else reject(new Error(`claude exited with code ${code}\n${stderr}`));
     });
 
@@ -63,24 +60,6 @@ function runClaude(prompt, { sessionId, cwd, worktree }) {
       reject(err);
     });
   });
-}
-
-function ghComment(repoFullName, issueNumber, body) {
-  let text = `${BOT_MARKER}\n${body}`;
-  if (text.length > MAX_COMMENT_LEN) {
-    text = text.slice(0, MAX_COMMENT_LEN) + '\n\n...(output truncated)';
-  }
-  // Write body to temp file to avoid shell escaping issues
-  const tmpFile = path.join(CONFIG_DIR, '.tmp_comment.md');
-  fs.writeFileSync(tmpFile, text);
-  try {
-    execSync(
-      `gh issue comment ${issueNumber} --repo ${repoFullName} --body-file "${tmpFile}"`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
-    );
-  } finally {
-    try { fs.unlinkSync(tmpFile); } catch {}
-  }
 }
 
 async function createSession(repoFullName, repoConfig, issue) {
@@ -109,33 +88,29 @@ async function createSession(repoFullName, repoConfig, issue) {
     ``,
     issue.body || '(no description)',
     ``,
-    `You have full autonomy. When you're ready:`,
-    `- Commit your changes with git`,
-    `- Push to remote`,
+    `You have full autonomy:`,
+    `- Implement the requested changes`,
+    `- Commit and push when ready`,
     `- Create a PR with \`gh pr create\``,
+    `- Reply on the issue with \`gh issue comment ${issue.number} --repo ${repoFullName} --body "<!-- bot -->\nyour message"\``,
+    `  IMPORTANT: Always start the body with \`<!-- bot -->\` so the system can identify your replies.`,
     ``,
-    `Your responses will be posted as comments on this issue. Keep responses concise.`,
+    `Always reply on the issue to report your progress. Keep replies concise.`,
   ].join('\n');
 
   try {
-    const output = await runClaude(prompt, {
+    await runClaude(prompt, {
       sessionId,
       cwd: repoConfig.localPath,
       worktree: `issue-${issue.number}`,
     });
-    console.log(`[sessions] claude finished for ${key}, output length: ${output.length}`);
-    if (output) ghComment(repoFullName, issue.number, output);
     console.log(`[sessions] session ${key} ready for follow-up comments`);
   } catch (err) {
-    console.error(`[sessions] error creating session for ${key}:`, err.message);
-    try { ghComment(repoFullName, issue.number, `🤖 Error: ${err.message.slice(0, 500)}`); } catch {}
+    console.error(`[sessions] error for ${key}:`, err.message);
   }
 }
 
 async function handleComment(repoFullName, repoConfig, issue, comment) {
-  // Ignore bot's own comments (identified by hidden marker)
-  if (comment.body?.includes(BOT_MARKER)) return;
-
   const key = sessionKey(repoFullName, issue.number);
   const session = sessions[key];
 
@@ -147,16 +122,13 @@ async function handleComment(repoFullName, repoConfig, issue, comment) {
   console.log(`[sessions] forwarding comment to ${key}: ${comment.body.slice(0, 80)}...`);
 
   try {
-    const output = await runClaude(comment.body, {
+    await runClaude(comment.body, {
       sessionId: session.sessionId,
       cwd: session.localPath,
     });
-    console.log(`[sessions] claude replied for ${key}, output length: ${output.length}`);
-    if (output) ghComment(repoFullName, issue.number, output);
-    console.log(`[sessions] comment posted for ${key}`);
+    console.log(`[sessions] claude done for ${key}`);
   } catch (err) {
-    console.error(`[sessions] error handling comment for ${key}:`, err.message);
-    try { ghComment(repoFullName, issue.number, `🤖 Error: ${err.message.slice(0, 500)}`); } catch {}
+    console.error(`[sessions] error for ${key}:`, err.message);
   }
 }
 

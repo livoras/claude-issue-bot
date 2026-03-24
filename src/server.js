@@ -63,6 +63,8 @@ function createServer(config, { onLabel, onComment, onClose }) {
 
       // Issue comment → forward to session
       if (event === 'issue_comment' && payload.action === 'created') {
+        // Skip bot's own comments
+        if (payload.comment?.body?.includes('<!-- bot -->')) return;
         // Only handle issues with the trigger label
         const hasLabel = payload.issue.labels?.some((l) => l.name === triggerLabel);
         if (hasLabel) {
