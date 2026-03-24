@@ -121,8 +121,17 @@ async function handleComment(repoFullName, repoConfig, issue, comment) {
 
   console.log(`[sessions] forwarding comment to ${key}: ${comment.body.slice(0, 80)}...`);
 
+  const prompt = [
+    `New comment on Issue #${issue.number} (${repoFullName}):`,
+    ``,
+    comment.body,
+    ``,
+    `Respond via: gh issue comment ${issue.number} --repo ${repoFullName} --body "<!-- bot -->\nyour reply"`,
+    `Close via: gh issue close ${issue.number} --repo ${repoFullName}`,
+  ].join('\n');
+
   try {
-    await runClaude(comment.body, {
+    await runClaude(prompt, {
       sessionId: session.sessionId,
       cwd: session.localPath,
     });
