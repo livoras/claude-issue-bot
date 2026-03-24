@@ -1,0 +1,31 @@
+{
+  "name": "claude-issue-bot",
+  "version": "0.1.0",
+  "description": "Let GitHub Issues talk to your local Claude Code. Label an issue, get a PR.",
+  "bin": {
+    "issue-bot": "./bin/issue-bot.js"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "github",
+    "issues",
+    "bot",
+    "automation",
+    "ai"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/livoras/claude-issue-bot.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ]
+}
